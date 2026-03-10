@@ -33,7 +33,7 @@ export default function App() {
     Provide the following details in plain text, with absolutely no markdown code blocks or JSON formatting inside the values:
     1. "genre_tags": A comma-separated string of musical style descriptors, instruments, vibe, and production techniques suitable for a Suno.ai prompt. Keep it under 1000 characters. Example format: "upbeat, 80s synthpop, female vocals, reverberated drums, nostalgic".
     2. "structure": A description of the song structure (e.g., Intro, Verse, Chorus...).
-    3. "rhyme_scheme": A description of the rhyme scheme used.
+    3. "rhyme_scheme": A description of the rhyme scheme used. Also include a syllable count per line if possible
      4. "sample_lyrics": A complete set of original sample lyrics that matches the identified genre, structure, and rhyme scheme.${topic ? ` The lyrics MUST be specifically about this topic: "${topic}".` : ' Write the lyrics about a typical theme for this artist.'} MUST include proper Suno.ai style metatags in brackets (e.g., [Intro], [Verse 1], [Chorus], [Drop], [Guitar Solo], [Outro]). Consider this will be between 3 and 5 minute song. FORMATTING RULE: You MUST use newline characters (\\n) to separate each line of the lyrics, and use double newlines (\\n\\n) to separate different song sections.
    
     Focus on high-fidelity audio descriptors.`;
