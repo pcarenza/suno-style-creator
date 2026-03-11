@@ -4,29 +4,29 @@ import { Music, Mic2, Disc, Copy, Check, Sparkles, AlertCircle, Loader2, Play, F
 const apiKey = "AIzaSyBbNHhzYq2qS26AeH7qSLt558YVsMqwv0s"; 
 
 export default function App() {
-  const [artist, setArtist] = useState('');
-  const [song, setSong] = useState('');
-  const [topic, setTopic] = useState('');
-  const [customKey, setCustomKey] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-  const [result, setResult] = useState(null);
-  const [copiedSection, setCopiedSection] = useState(null);
+  const [artist, setArtist] = useState(''); // State variable to hold the artist name input by the user. Initially set to an empty string.
+  const [song, setSong] = useState(''); // State variable to hold the song title input by the user. Initially set to an empty string.
+  const [topic, setTopic] = useState(''); // State variable to hold the lyrical topic input by the user. Initially set to an empty string.
+  const [customKey, setCustomKey] = useState(''); // State variable to hold a custom API key input by the user. This allows users to use their own Google Gemini API key if they have one, which can be necessary if the default key's usage limits are exceeded.
+  const [loading, setLoading] = useState(false); // State variable to indicate whether the application is currently loading/generating a response from the AI. Initially set to false.
+  const [error, setError] = useState(null); // State variable to hold any error messages that occur during the API request process. Initially set to null, indicating no errors.
+  const [result, setResult] = useState(null); // State variable to hold the generated prompt or result from the AI. Initially set to null.
+  const [copiedSection, setCopiedSection] = useState(null); // State variable to track which section of the generated content has been copied.
 
   const delay = (ms) => new Promise(res => setTimeout(res, ms));
 
-  const generatePrompt = async () => {
+  const generatePrompt = async () => { // This is an asynchronous function that will be called when the user clicks the "Generate Prompt" button. It handles the logic for validating input, making the API request to generate the prompt, and updating the state based on the response or any errors that occur.
     if (!artist.trim()) {
       setError('Please enter an artist name.');
       return;
     }
 
-    setLoading(true);
-    setError(null);
-    setResult(null);
+    setLoading(true); // Set the loading state to true to indicate that the application is now processing the request. This can be used to show a loading spinner or disable the generate button while waiting for the response.
+    setError(null); // Clear any previous error messages by setting the error state to null. This ensures that old errors don't persist when the user tries to generate a new prompt.
+    setResult(null); // Clear any previous results by setting the result state to null. This ensures that old results don't persist when the user tries to generate a new prompt.
 
     const effectiveKey = customKey.trim() || apiKey;
-    const modelToUse = customKey.trim() ? 'gemini-2.5-flash' : 'gemini-2.5-flash-preview-09-2025';
+    const modelToUse = 'gemini-2.5-flash';
 
     const userQuery = `Analyze the musical style of artist "${artist}"${song ? ` and specifically the song "${song}"` : ''}. 
     
@@ -38,7 +38,7 @@ export default function App() {
    
     Focus on high-fidelity audio descriptors.`;
 
-    const requestBody = {
+    const requestBody = { // This is the body of the POST request that will be sent to the Google Gemini API. It includes the user's query and specifies the desired response format and schema.
       contents: [{ parts: [{ text: userQuery }] }],
       generationConfig: {
         responseMimeType: "application/json",
