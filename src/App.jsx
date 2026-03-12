@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Music, Mic2, Disc, Copy, Check, Sparkles, AlertCircle, Loader2, Play, FileText, MessageSquare, Key } from 'lucide-react';
 
-const apiKey = "AIzaSyBbNHhzYq2qS26AeH7qSLt558YVsMqwv0s"; 
+const apiKey = ""; 
 
 export default function App() {
   const [artist, setArtist] = useState(''); // State variable to hold the artist name input by the user. Initially set to an empty string.
@@ -25,8 +25,8 @@ export default function App() {
     setError(null); // Clear any previous error messages by setting the error state to null. This ensures that old errors don't persist when the user tries to generate a new prompt.
     setResult(null); // Clear any previous results by setting the result state to null. This ensures that old results don't persist when the user tries to generate a new prompt.
 
-    const effectiveKey = customKey.trim() || apiKey;
-    const modelToUse = 'gemini-2.5-flash';
+    const effectiveKey = customKey.trim() ||apiKey;
+    const modelToUse = customKey.trim()? 'gemini-2.5-flash' : 'gemini-2.5-flash-preview-09-2025';
 
     const userQuery = `Analyze the musical style of artist "${artist}"${song ? ` and specifically the song "${song}"` : ''}. 
     
