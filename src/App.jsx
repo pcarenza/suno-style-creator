@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Music, Mic2, Disc, Copy, Check, Sparkles, AlertCircle, Loader2, Play, FileText, MessageSquare, Key } from 'lucide-react';
 
-const apiKey = "AIzaSyBbNHhzYq2qS26AeH7qSLt558YVsMqwv0s"; 
+const apiKey = ""; 
 
 export default function App() {
   const [artist, setArtist] = useState('');
