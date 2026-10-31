@@ -4,7 +4,7 @@ import { DEFAULT_MCP_URL } from './mcpConfig';
 
 // The MCP SDK is loaded on demand so it doesn't weigh down the first page load.
 const loadMcp = () => import('./mcp');
-import { listModels, pickDefaultModel, buildPrompt, generateSunoPrompt } from './gemini';
+import { listModels, pickDefaultModel, fallbackModels, buildPrompt, generateSunoPrompt } from './gemini';
 
 const readPref = (key, fallback) => {
   try {
@@ -48,6 +48,8 @@ export default function App() {
   const [model, setModel] = useState(() => readPref('gemini.model', ''));
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelsError, setModelsError] = useState(null);
+  const [genStatus, setGenStatus] = useState(null); // e.g. "x is busy. Trying y..."
+  const [modelUsed, setModelUsed] = useState(null);
 
   useEffect(() => { if (model) writePref('gemini.model', model); }, [model]);
 
@@ -59,10 +61,10 @@ export default function App() {
       setModels(ids);
       const chosen = ids.includes(model) ? model : pickDefaultModel(ids);
       setModel(chosen);
-      return chosen;
+      return { chosen, ids };
     } catch (err) {
       setModelsError(err.message);
-      return '';
+      return { chosen: '', ids: [] };
     } finally {
       setModelsLoading(false);
     }
@@ -118,6 +120,8 @@ export default function App() {
     setLoading(true);
     setError(null);
     setResult(null);
+    setModelUsed(null);
+    setGenStatus(null);
     setMcpContext(null);
     setMcpWarning(null);
     setShowRaw(false);
@@ -138,11 +142,15 @@ export default function App() {
     setMcpStage('llm');
 
     try {
-      const chosenModel = (models.includes(model) && model) || await loadModels(customKey.trim());
+      let chosenModel = models.includes(model) ? model : '';
+      let available = models;
+      if (!chosenModel) ({ chosen: chosenModel, ids: available } = await loadModels(customKey.trim()));
       if (!chosenModel) throw new Error('Could not find a Gemini model for this API key. Check the key.');
-      const parsed = await generateSunoPrompt({
+      const { result: parsed, modelUsed: used } = await generateSunoPrompt({
         apiKey: customKey.trim(),
         model: chosenModel,
+        fallbacks: fallbackModels(available, chosenModel),
+        onStatus: setGenStatus,
         prompt: buildPrompt({
           artist: artist.trim(),
           song: song.trim(),
@@ -151,10 +159,12 @@ export default function App() {
         }),
       });
       setResult(parsed);
+      setModelUsed(used);
     } catch (err) {
       console.error(err);
       setError(err.message);
     }
+    setGenStatus(null);
     setLoading(false); setMcpStage(null);
   };
 
@@ -384,6 +394,14 @@ export default function App() {
                       <span>{result.genre_tags.length} chars</span>
                       <span className="w-1 h-1 rounded-full bg-slate-600"></span>
                       <span>Ready for Suno.ai "Style of Music" box</span>
+                      {modelUsed && (
+                        <>
+                          <span className="w-1 h-1 rounded-full bg-slate-600"></span>
+                          <span className={modelUsed !== model ? 'text-amber-300' : ''}>
+                            {modelUsed !== model ? `Written by ${modelUsed} (${model} was busy)` : `Written by ${modelUsed}`}
+                          </span>
+                        </>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -470,6 +488,7 @@ export default function App() {
                   <div className="flex flex-col items-center animate-in fade-in duration-300">
                     <Loader2 className="w-12 h-12 animate-spin text-purple-500 mb-6" />
                     <p className="text-lg text-slate-300 font-medium">{mcpStage === 'mcp' ? 'Fetching audio analysis over MCP...' : 'Analyzing Musical Style...'}</p>
+                    {genStatus && <p className="text-sm mt-2 text-amber-300">{genStatus}</p>}
                     <p className="text-sm mt-2 max-w-sm">Generating Suno.ai tags, song structure, and writing original lyrics.</p>
                   </div>
                 ) : (
