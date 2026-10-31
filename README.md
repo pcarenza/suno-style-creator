@@ -10,7 +10,7 @@ Generates Suno.ai style tags, song structure, rhyme scheme and Suno-ready lyrics
 
 ## MCP grounding (v4)
 
-Before calling Gemini, the app can connect to a remote **MCP server** and pull real audio analysis. By default it uses [MusicAtlas](https://musicatlas.ai/connectors/), which is free and needs no account: `https://mcp.musicatlas.ai/mcp`.
+Before calling Gemini, the app can connect to a remote **MCP server** and pull real audio analysis. It uses [MusicAtlas](https://musicatlas.ai/connectors/), which is free and needs no account. MusicAtlas (`https://mcp.musicatlas.ai/mcp`) blocks direct browser calls (no CORS headers), so the default address is the proxy in `mcp-proxy/`, deployed at `https://suno-mcp-proxy.pcarenza.workers.dev/mcp`.
 
 | Tool | When | Used for |
 |---|---|---|
