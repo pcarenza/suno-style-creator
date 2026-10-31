@@ -1,16 +1,35 @@
-# React + Vite
+# SunoPrompt AI
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Generates Suno.ai style tags, song structure, rhyme scheme and Suno-ready lyrics from an artist, an optional song, and an optional topic.
 
-Currently, two official plugins are available:
+## MCP grounding (v4)
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+Before calling Gemini, the app can connect to a remote **MCP server** and pull real audio analysis. By default it uses [MusicAtlas](https://musicatlas.ai/connectors/), which is free and needs no account: `https://mcp.musicatlas.ai/mcp`.
 
-## React Compiler
+| Tool | When | Used for |
+|---|---|---|
+| `describe_track` | song given | instrumentation, tempo, energy, production → style tags |
+| `find_similar_tracks` | song given | stylistic neighbours |
+| `find_similar_artists` | always | stylistic neighbours |
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- The results go into the Gemini prompt as reference data. Artist names are kept out of the style tags.
+- You can see the raw data in the **MusicAtlas Reference Data** panel.
+- If the MCP server can't be reached, the app shows a warning and generates without it.
+- You can switch it off, or point it at any anonymous Streamable-HTTP MCP server, in the form. Use **Test** to list the server's tools.
 
-## Expanding the ESLint configuration
+### If the browser is blocked by CORS
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+Deploy the small proxy in `mcp-proxy/` (a Cloudflare Worker). Then set the app's MCP URL to `https://<worker>.workers.dev/mcp`:
+
+```bash
+cd mcp-proxy && npx wrangler deploy
+```
+
+## Dev
+
+```bash
+npm install
+npm run dev
+```
+
+Paste a Gemini API key into the form to run locally. Pushes to `main` deploy to GitHub Pages.
