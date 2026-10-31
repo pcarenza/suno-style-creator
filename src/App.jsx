@@ -4,7 +4,7 @@ import { DEFAULT_MCP_URL, DIRECT_MUSICATLAS_URL } from './mcpConfig';
 
 // The MCP SDK is loaded on demand so it doesn't weigh down the first page load.
 const loadMcp = () => import('./mcp');
-import { listModels, pickDefaultModel, fallbackModels, buildPrompt, generateSunoPrompt } from './gemini';
+import { listModels, pickDefaultModel, fallbackModels, buildPrompt, generateSunoPrompt, fitStylePrompt, STYLE_PROMPT_MAX } from './gemini';
 
 const readPref = (key, fallback) => {
   try {
@@ -161,7 +161,8 @@ export default function App() {
           reference: buildReferenceBlock(ctx),
         }),
       });
-      setResult(parsed);
+      const style = fitStylePrompt(parsed.genre_tags);
+      setResult({ ...parsed, genre_tags: style.text, styleTrimmed: style.trimmed });
       setModelUsed(used);
     } catch (err) {
       console.error(err);
@@ -379,7 +380,7 @@ export default function App() {
                 <div className="bg-slate-900 rounded-2xl border border-purple-500/30 overflow-hidden shadow-2xl shadow-purple-900/10">
                   <div className="bg-slate-800/50 px-6 py-4 border-b border-slate-800 flex justify-between items-center">
                     <h3 className="font-semibold text-purple-300 flex items-center gap-2">
-                      <Play className="w-4 h-4 fill-current" /> Suno Style Tags
+                      <Play className="w-4 h-4 fill-current" /> Suno Style Prompt
                     </h3>
                     <button
                       onClick={() => copyToClipboard(result.genre_tags, 'tags')}
@@ -390,11 +391,23 @@ export default function App() {
                     </button>
                   </div>
                   <div className="p-6">
-                    <p className="text-lg leading-relaxed text-slate-200 font-mono">
+                    <p className="text-base leading-relaxed text-slate-200 whitespace-pre-wrap">
                       {result.genre_tags}
                     </p>
-                    <div className="mt-4 flex items-center gap-2 text-xs text-slate-500">
-                      <span>{result.genre_tags.length} chars</span>
+                    <div className="mt-4 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                      <span className={
+                        result.genre_tags.length > STYLE_PROMPT_MAX ? 'text-red-400 font-medium'
+                          : result.genre_tags.length > STYLE_PROMPT_MAX * 0.9 ? 'text-amber-300 font-medium'
+                          : 'text-emerald-400 font-medium'
+                      }>
+                        {result.genre_tags.length.toLocaleString()} / {STYLE_PROMPT_MAX.toLocaleString()} chars
+                      </span>
+                      {result.styleTrimmed && (
+                        <>
+                          <span className="w-1 h-1 rounded-full bg-slate-600"></span>
+                          <span className="text-amber-300">Shortened to fit</span>
+                        </>
+                      )}
                       <span className="w-1 h-1 rounded-full bg-slate-600"></span>
                       <span>Ready for Suno.ai "Style of Music" box</span>
                       {modelUsed && (
