@@ -76,11 +76,26 @@ export function fallbackModels(ids, model, count = 2) {
   return rankFlashModels(ids).filter((id) => id !== model).slice(0, count);
 }
 
+export const STYLE_PROMPT_MAX = 1000;
+
+/**
+ * Keep the style prompt within STYLE_PROMPT_MAX characters, cutting at the
+ * last sentence end (or comma) that fits so it never ends mid-phrase.
+ */
+export function fitStylePrompt(text, max = STYLE_PROMPT_MAX) {
+  const clean = (text || '').trim();
+  if (clean.length <= max) return { text: clean, trimmed: false };
+  const head = clean.slice(0, max);
+  const sentenceEnd = Math.max(head.lastIndexOf('. '), head.lastIndexOf('.\n'), head.endsWith('.') ? max - 1 : -1);
+  const cut = sentenceEnd > max * 0.5 ? sentenceEnd + 1 : head.lastIndexOf(',');
+  return { text: (cut > 0 ? head.slice(0, cut) : head).trim(), trimmed: true };
+}
+
 export function buildPrompt({ artist, song, topic, reference }) {
   return `Analyze the musical style of artist "${artist}"${song ? ` and specifically the song "${song}"` : ''}.
 
 Provide the following details in plain text, with absolutely no markdown code blocks or JSON formatting inside the values:
-1. "genre_tags": A comma-separated string of musical style descriptors, instruments, vibe, and production techniques suitable for a Suno.ai prompt. Keep it under 1000 characters. Never include artist names or song titles (Suno rejects them). Example format: "upbeat, 80s synthpop, female vocals, reverberated drums, nostalgic".
+1. "genre_tags": A rich, descriptive Suno.ai "Style of Music" prompt. Aim for roughly 750 to 950 characters and NEVER exceed ${STYLE_PROMPT_MAX} characters. Start with one line of comma-separated core style tags: genre and subgenre, era, tempo in BPM, musical key, vocal type, and mood (e.g. "upbeat, 80s synthpop, 118 BPM, A minor, breathy female vocals, nostalgic"). Then describe the sound in complete sentences: the instruments and how each is played, the vocal delivery, the rhythm and groove, how the arrangement builds and drops across the song, and the mix and production techniques. Finish every sentence. Never include artist names, band names or song titles (Suno rejects them).
 2. "structure": A description of the song structure (e.g., Intro, Verse, Chorus...).
 3. "rhyme_scheme": A description of the rhyme scheme used, and the pattern of syllables per line (e.g., AABB with 8 syllables per line).
 4. "sample_lyrics": A complete set of original sample lyrics that matches the identified genre, structure, and rhyme scheme.${topic ? ` The lyrics MUST be specifically about this topic: "${topic}".` : ' Write the lyrics about a typical theme for this artist.'} MUST include proper Suno.ai style metatags in brackets (e.g., [Intro], [Verse 1], [Chorus], [Drop], [Guitar Solo], [Outro]). Consider this will be between a 3 and 5 minute song. Put each lyric line on its own line and leave a blank line between song sections.
