@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Music, Mic2, Disc, Copy, Check, Sparkles, AlertCircle, Loader2, Play, FileText, MessageSquare, Key, Plug, Radio, Users, ChevronDown } from 'lucide-react';
-import { DEFAULT_MCP_URL } from './mcpConfig';
+import { DEFAULT_MCP_URL, DIRECT_MUSICATLAS_URL } from './mcpConfig';
 
 // The MCP SDK is loaded on demand so it doesn't weigh down the first page load.
 const loadMcp = () => import('./mcp');
@@ -79,7 +79,10 @@ export default function App() {
 
   // MCP enrichment
   const [useMcp, setUseMcp] = useState(() => readPref('mcp.enabled', true));
-  const [mcpUrl, setMcpUrl] = useState(() => readPref('mcp.url', DEFAULT_MCP_URL));
+  const [mcpUrl, setMcpUrl] = useState(() => {
+    const saved = readPref('mcp.url', DEFAULT_MCP_URL);
+    return saved === DIRECT_MUSICATLAS_URL ? DEFAULT_MCP_URL : saved;
+  });
   const [mcpStage, setMcpStage] = useState(null); // null | 'mcp' | 'llm'
   const [mcpContext, setMcpContext] = useState(null);
   const [mcpWarning, setMcpWarning] = useState(null);
@@ -284,7 +287,7 @@ export default function App() {
                     </div>
                     {mcpUrl.trim() !== DEFAULT_MCP_URL && (
                       <button type="button" onClick={() => setMcpUrl(DEFAULT_MCP_URL)} className="text-xs text-slate-500 hover:text-slate-300 underline">
-                        Reset to MusicAtlas default
+                        Reset to default (MusicAtlas via proxy)
                       </button>
                     )}
                     {mcpTest && (
