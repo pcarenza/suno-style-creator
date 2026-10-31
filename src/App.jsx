@@ -4,6 +4,7 @@ import { DEFAULT_MCP_URL } from './mcpConfig';
 
 // The MCP SDK is loaded on demand so it doesn't weigh down the first page load.
 const loadMcp = () => import('./mcp');
+const loadClaude = () => import('./claude');
 
 const readPref = (key, fallback) => {
   try {
@@ -15,7 +16,7 @@ const writePref = (key, value) => {
   try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* storage unavailable */ }
 };
 
-// Turn MCP tool output into a reference block for the Gemini prompt.
+// Turn MCP tool output into a reference block for the Claude prompt.
 const buildReferenceBlock = (ctx) => {
   if (!ctx) return '';
   const sections = [];
@@ -23,15 +24,13 @@ const buildReferenceBlock = (ctx) => {
   if (ctx.similarTracks) sections.push(`SONICALLY SIMILAR TRACKS:\n${ctx.similarTracks}`);
   if (ctx.similarArtists) sections.push(`SONICALLY SIMILAR ARTISTS:\n${ctx.similarArtists}`);
   if (!sections.length) return '';
-  return `
+  return `Reference data from MusicAtlas audio analysis (via MCP). Treat it as ground truth about how the music sounds: let its instrumentation, tempo, energy, rhythm and production details drive genre_tags, and use the similar artists and tracks only as stylistic context.
 
-    REFERENCE DATA (from MusicAtlas audio analysis via MCP). Treat it as ground truth about the sound: use its instrumentation, tempo, energy, rhythm and production details to drive "genre_tags", and use similar artists only as stylistic context. NEVER put any artist or song names in "genre_tags" (Suno rejects them).
-    ---
-    ${sections.join('\n\n')}
-    ---`;
+<reference_data>
+${sections.join('\n\n')}
+</reference_data>`;
 };
 
-const apiKey = ""; 
 
 export default function App() {
   const [artist, setArtist] = useState('');
@@ -70,11 +69,13 @@ export default function App() {
     setTesting(false);
   };
 
-  const delay = (ms) => new Promise(res => setTimeout(res, ms));
-
   const generatePrompt = async () => {
     if (!artist.trim()) {
       setError('Please enter an artist name.');
+      return;
+    }
+    if (!customKey.trim()) {
+      setError('Please paste your Anthropic API key.');
       return;
     }
 
@@ -100,101 +101,21 @@ export default function App() {
     }
     setMcpStage('llm');
 
-    const effectiveKey = customKey.trim() || apiKey;
-    const modelToUse = customKey.trim() ? 'gemini-2.5-flash' : 'gemini-2.5-flash-preview-09-2025';
-
-    const userQuery = `Analyze the musical style of artist "${artist}"${song ? ` and specifically the song "${song}"` : ''}. 
-    
-    Provide the following details in plain text, with absolutely no markdown code blocks or JSON formatting inside the values:
-    1. "genre_tags": A comma-separated string of musical style descriptors, instruments, vibe, and production techniques suitable for a Suno.ai prompt. Keep it under 1000 characters. Example format: "upbeat, 80s synthpop, female vocals, reverberated drums, nostalgic".
-    2. "structure": A description of the song structure (e.g., Intro, Verse, Chorus...).
-    3. "rhyme_scheme": A description of the rhyme scheme used. also the pattern of syllables per line (e.g., AABB with 8 syllables per line).
-    4. "sample_lyrics": A complete set of original sample lyrics that matches the identified genre, structure, and rhyme scheme.${topic ? ` The lyrics MUST be specifically about this topic: "${topic}".` : ' Write the lyrics about a typical theme for this artist.'} MUST include proper Suno.ai style metatags in brackets (e.g., [Intro], [Verse 1], [Chorus], [Drop], [Guitar Solo], [Outro]). Consider this will be between a 3 and 5 minute song. FORMATTING RULE: You MUST use newline characters (\\n) to separate each line of the lyrics, and use double newlines (\\n\\n) to separate different song sections.
-   
-    Focus on high-fidelity audio descriptors.${buildReferenceBlock(ctx)}`;
-
-    const requestBody = {
-      contents: [{ parts: [{ text: userQuery }] }],
-      generationConfig: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: "OBJECT",
-          properties: {
-            genre_tags: { type: "STRING" },
-            structure: { type: "STRING" },
-            rhyme_scheme: { type: "STRING" },
-            sample_lyrics: { type: "STRING" }
-          },
-          required: ["genre_tags", "structure", "rhyme_scheme", "sample_lyrics"]
-        }
-      }
-    };
-
-    let attempts = 0;
-    const maxRetries = 5;
-    const delays = [1000, 2000, 4000, 8000, 16000];
-    let lastErrorMsg = "";
-
-    while (attempts < maxRetries) {
-      try {
-        const response = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/${modelToUse}:generateContent?key=${effectiveKey}`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(requestBody),
-          }
-        );
-
-        if (!response.ok) {
-          const errData = await response.json().catch(() => ({}));
-          const status = response.status;
-          const msg = errData.error?.message || 'Unknown network error';
-          
-          if (status === 401) {
-            throw new Error(`HTTP 401 Unauthorized: Your Canvas session has likely expired. Please REFRESH THE PAGE to renew it. (Or enter a custom API key below).`);
-          } else if (status === 404) {
-            throw new Error(`HTTP 404 Not Found: Model unavailable. If using a custom key, check your API access limits.`);
-          }
-          throw new Error(`HTTP ${status}: ${msg}`);
-        }
-
-        const data = await response.json();
-        let textResponse = data.candidates?.[0]?.content?.parts?.[0]?.text;
-        
-        if (textResponse) {
-          // Strip markdown backticks safely
-          textResponse = textResponse.replace(/^[\s\x60]*(?:json)?\s*/i, '').replace(/[\s\x60]*$/i, '');
-          
-          const parsed = JSON.parse(textResponse);
-          
-          setResult(parsed);
-          setLoading(false); setMcpStage(null);
-          return; 
-        } else {
-          throw new Error("No data returned from AI");
-        }
-
-      } catch (err) {
-        console.warn(`Attempt ${attempts + 1} failed:`, err);
-        lastErrorMsg = err.message;
-        
-        // Instantly fail without retrying for auth/model errors
-        if (err.message.includes('401') || err.message.includes('404')) {
-          setError(err.message);
-          setLoading(false); setMcpStage(null);
-          return;
-        }
-
-        attempts++;
-        if (attempts >= maxRetries) {
-          setError(`Failed after 5 attempts. Last error: ${lastErrorMsg}`);
-          setLoading(false); setMcpStage(null);
-          return;
-        }
-        await delay(delays[attempts - 1]);
-      }
+    try {
+      const { generateSunoPrompt } = await loadClaude();
+      const parsed = await generateSunoPrompt({
+        apiKey: customKey.trim(),
+        artist: artist.trim(),
+        song: song.trim(),
+        topic: topic.trim(),
+        reference: buildReferenceBlock(ctx),
+      });
+      setResult(parsed);
+    } catch (err) {
+      console.error(err);
+      setError(err.message);
     }
+    setLoading(false); setMcpStage(null);
   };
 
   const copyToClipboard = (text, section) => {
@@ -225,7 +146,7 @@ export default function App() {
             </h1>
           </div>
           <span className="text-xs font-medium px-2 py-1 rounded bg-slate-800 text-slate-400 border border-slate-700">
-            v4.0 MCP
+            v5.0 Claude + MCP
           </span>
         </div>
       </header>
@@ -335,15 +256,19 @@ export default function App() {
 
               <div className="mb-6 space-y-2 border-t border-slate-800 pt-6">
                 <label className="text-sm font-medium text-slate-300 flex items-center gap-2">
-                  <Key className="w-4 h-4 text-yellow-400" /> Custom API Key <span className="text-xs text-slate-500">(Required for local VS Code)</span>
+                  <Key className="w-4 h-4 text-yellow-400" /> Anthropic API Key <span className="text-red-400">*</span>
                 </label>
                 <input
                   type="password"
                   value={customKey}
                   onChange={(e) => setCustomKey(e.target.value)}
-                  placeholder="Paste your Google Gemini API key here..."
+                  placeholder="sk-ant-..."
+                  autoComplete="off"
                   className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-yellow-500 focus:border-transparent transition-all"
                 />
+                <p className="text-xs text-slate-500">
+                  Get one at console.anthropic.com. It is sent only to api.anthropic.com from your browser and is never stored.
+                </p>
               </div>
 
               {mcpWarning && (
