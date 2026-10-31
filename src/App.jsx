@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { Music, Mic2, Disc, Copy, Check, Sparkles, AlertCircle, Loader2, Play, FileText, MessageSquare, Key, Plug, Radio, Users, ChevronDown } from 'lucide-react';
+import { Music, Mic2, Disc, Copy, Check, Sparkles, AlertCircle, Loader2, Play, FileText, MessageSquare, Key, Plug, Radio, Users, ChevronDown, Layers, ListMusic, Eraser, ClipboardList } from 'lucide-react';
 import { DEFAULT_MCP_URL, DIRECT_MUSICATLAS_URL } from './mcpConfig';
 
 // The MCP SDK is loaded on demand so it doesn't weigh down the first page load.
 const loadMcp = () => import('./mcp');
-import { listModels, pickDefaultModel, fallbackModels, buildPrompt, generateSunoPrompt, fitStylePrompt, STYLE_PROMPT_MAX } from './gemini';
+import { listModels, pickDefaultModel, fallbackModels, buildPrompt, generateSunoPrompt, fitStylePrompt, formatSections, STYLE_PROMPT_MAX } from './gemini';
 
 const readPref = (key, fallback) => {
   try {
@@ -33,10 +33,13 @@ const buildReferenceBlock = (ctx) => {
 };
 
 
+const STEM_COLORS = ['#f0c040', '#a78bfa', '#40c080', '#f87171', '#60a5fa', '#fb923c', '#34d399', '#e879f9', '#facc15', '#38bdf8', '#4ade80', '#f472b6'];
+
 export default function App() {
   const [artist, setArtist] = useState('');
   const [song, setSong] = useState('');
   const [topic, setTopic] = useState('');
+  const [lyrics, setLyrics] = useState('');
   const [customKey, setCustomKey] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -158,11 +161,19 @@ export default function App() {
           artist: artist.trim(),
           song: song.trim(),
           topic: topic.trim(),
+          lyrics: lyrics.trim(),
           reference: buildReferenceBlock(ctx),
         }),
       });
       const style = fitStylePrompt(parsed.genre_tags);
-      setResult({ ...parsed, genre_tags: style.text, styleTrimmed: style.trimmed });
+      setResult({
+        ...parsed,
+        genre_tags: style.text,
+        styleTrimmed: style.trimmed,
+        stems: Array.isArray(parsed.stems) ? parsed.stems : [],
+        sections: Array.isArray(parsed.sections) ? parsed.sections : [],
+        structureSource: lyrics.trim() ? 'lyrics' : song.trim() ? 'song' : 'artist',
+      });
       setModelUsed(used);
     } catch (err) {
       console.error(err);
@@ -170,6 +181,13 @@ export default function App() {
     }
     setGenStatus(null);
     setLoading(false); setMcpStage(null);
+  };
+
+  // Clears the song inputs and results; keeps the API key, model and MCP settings.
+  const clearAll = () => {
+    setArtist(''); setSong(''); setTopic(''); setLyrics('');
+    setResult(null); setError(null); setModelUsed(null); setGenStatus(null);
+    setMcpContext(null); setMcpWarning(null); setShowRaw(false);
   };
 
   const copyToClipboard = (text, section) => {
@@ -210,7 +228,7 @@ export default function App() {
         <section className="text-center space-y-3 mb-4">
           <h2 className="text-3xl font-bold text-white">Generate Suno.ai Styles & Lyrics</h2>
           <p className="text-slate-400 max-w-lg mx-auto">
-            Enter an artist, song, and a custom topic to generate optimized style tags, structure analysis, and Suno-ready lyrics.
+            Enter an artist, a song and a topic to get a Suno style prompt, per-instrument stem prompts, a section-by-section structure, and original Suno-ready lyrics.
           </p>
         </section>
 
@@ -260,6 +278,24 @@ export default function App() {
                   className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-pink-500 focus:border-transparent transition-all"
                   onKeyDown={(e) => e.key === 'Enter' && generatePrompt()}
                 />
+              </div>
+
+              <div className="mb-6 space-y-2">
+                <label className="text-sm font-medium text-slate-300 flex items-center gap-2">
+                  <ClipboardList className="w-4 h-4 text-sky-400" /> Paste Song Lyrics <span className="text-xs text-slate-500">(Optional, for an accurate structure)</span>
+                </label>
+                <textarea
+                  value={lyrics}
+                  onChange={(e) => setLyrics(e.target.value)}
+                  rows={5}
+                  placeholder={'Paste the reference song\'s lyrics to measure its real line counts, rhyme and meter.\nThey are only analyzed, never copied into the results.'}
+                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-3 text-sm text-white placeholder-slate-500 font-mono leading-relaxed resize-y focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-transparent transition-all"
+                />
+                {lyrics.trim() && (
+                  <p className="text-xs text-sky-400">
+                    {lyrics.trim().split('\n').filter((l) => l.trim()).length} lines pasted. The structure will be measured from them.
+                  </p>
+                )}
               </div>
 
               <div className="mb-6 space-y-3 border-t border-slate-800 pt-6">
@@ -351,10 +387,11 @@ export default function App() {
                 </div>
               )}
 
+              <div className="flex gap-3">
               <button
                 onClick={generatePrompt}
                 disabled={loading}
-                className={`w-full py-4 rounded-xl font-bold text-lg shadow-lg flex items-center justify-center gap-2 transition-all transform hover:scale-[1.01] active:scale-[0.99]
+                className={`flex-1 py-4 rounded-xl font-bold text-lg shadow-lg flex items-center justify-center gap-2 transition-all transform hover:scale-[1.01] active:scale-[0.99]
                   ${loading 
                     ? 'bg-slate-700 text-slate-400 cursor-not-allowed' 
                     : 'bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white shadow-purple-900/20'
@@ -370,6 +407,16 @@ export default function App() {
                   </>
                 )}
               </button>
+              <button
+                type="button"
+                onClick={clearAll}
+                disabled={loading}
+                title="Clear the song fields and results (keeps your key and settings)"
+                className="px-5 rounded-xl border border-slate-700 bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <Eraser className="w-4 h-4" /> Clear
+              </button>
+              </div>
             </div>
           </div>
 
@@ -422,34 +469,75 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="bg-slate-900 rounded-2xl border border-slate-800 p-6 shadow-lg hover:border-slate-700 transition-colors">
-                    <div className="flex justify-between items-start mb-4">
-                      <h4 className="font-medium text-slate-400 uppercase tracking-wider text-xs">Song Structure</h4>
+                {result.stems.length > 0 && (
+                  <div className="bg-slate-900 rounded-2xl border border-slate-800 p-6 shadow-lg">
+                    <h4 className="font-medium text-amber-300 uppercase tracking-wider text-xs flex items-center gap-2 mb-1">
+                      <Layers className="w-4 h-4" /> Stem Layer Prompts
+                    </h4>
+                    <p className="text-xs text-slate-500 mb-4">One prompt per instrument group, each for generating that layer on its own in Suno.</p>
+                    <div className="space-y-3">
+                      {result.stems.map((stem, i) => (
+                        <div key={i} className="bg-slate-950 rounded-xl border border-slate-800/70 overflow-hidden">
+                          <div className="flex items-center justify-between px-4 py-2 border-b border-slate-800/70">
+                            <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: STEM_COLORS[i % STEM_COLORS.length] }}>
+                              {stem.group}
+                            </span>
+                            <button
+                              onClick={() => copyToClipboard(stem.prompt, `stem-${i}`)}
+                              className="text-xs font-medium px-3 py-1 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors flex items-center gap-1.5 border border-slate-700"
+                            >
+                              {copiedSection === `stem-${i}` ? <Check className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3" />}
+                              {copiedSection === `stem-${i}` ? 'Copied' : 'Copy'}
+                            </button>
+                          </div>
+                          <p className="px-4 py-3 text-sm text-slate-300 leading-relaxed">{stem.prompt}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {result.sections.length > 0 && (
+                  <div className="bg-slate-900 rounded-2xl border border-slate-800 p-6 shadow-lg">
+                    <div className="flex justify-between items-start mb-1 gap-3">
+                      <h4 className="font-medium text-emerald-400 uppercase tracking-wider text-xs flex items-center gap-2">
+                        <ListMusic className="w-4 h-4" /> Song Structure & Meter
+                      </h4>
                       <button
-                        onClick={() => copyToClipboard(result.structure, 'struct')}
-                        className="text-slate-500 hover:text-white transition-colors"
+                        onClick={() => copyToClipboard(formatSections(result.sections), 'struct')}
+                        className="text-xs font-medium px-3 py-1 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors flex items-center gap-1.5 border border-slate-700 shrink-0"
                       >
-                        {copiedSection === 'struct' ? <Check className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4" />}
+                        {copiedSection === 'struct' ? <Check className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3" />}
+                        {copiedSection === 'struct' ? 'Copied' : 'Copy'}
                       </button>
                     </div>
-                    <p className="text-slate-200 whitespace-pre-wrap">{result.structure}</p>
-                  </div>
-
-                  <div className="bg-slate-900 rounded-2xl border border-slate-800 p-6 shadow-lg hover:border-slate-700 transition-colors">
-                    <div className="flex justify-between items-start mb-4">
-                      <h4 className="font-medium text-slate-400 uppercase tracking-wider text-xs">Rhyme Scheme</h4>
-                      <button
-                        onClick={() => copyToClipboard(result.rhyme_scheme, 'rhyme')}
-                        className="text-slate-500 hover:text-white transition-colors"
-                      >
-                        {copiedSection === 'rhyme' ? <Check className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4" />}
-                      </button>
+                    <p className="text-xs text-slate-500 mb-4">
+                      {result.tempo_bpm ? `${result.tempo_bpm} BPM` : ''}{result.tempo_bpm && result.key ? ' · ' : ''}{result.key || ''}
+                      {(result.tempo_bpm || result.key) ? ' · ' : ''}
+                      {result.structureSource === 'lyrics' ? 'Measured from your pasted lyrics'
+                        : result.structureSource === 'song' ? "Estimated from Gemini's knowledge of the song. Paste the lyrics for exact counts."
+                        : 'Typical structure for this artist (no song given)'}
+                    </p>
+                    <div className="space-y-3">
+                      {result.sections.map((sec, i) => (
+                        <div key={i} className="bg-slate-950 rounded-xl border border-slate-800/70 px-4 py-3">
+                          <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+                            <span className="text-sm font-semibold text-slate-100 uppercase tracking-wide">{sec.name}</span>
+                            <span className="text-xs font-mono text-slate-400">
+                              {sec.bars} bars · {sec.seconds}s · {sec.lines > 0 ? `${sec.lines} lines · ${sec.rhyme} · ${sec.meter}` : 'instrumental'}
+                            </span>
+                          </div>
+                          <p className="text-sm text-slate-400 mt-1.5">{sec.description}</p>
+                          <p className="text-xs font-mono text-emerald-300/90 mt-2">{sec.suno_tags}</p>
+                        </div>
+                      ))}
                     </div>
-                    <p className="text-slate-200 whitespace-pre-wrap">{result.rhyme_scheme}</p>
+                    <p className="text-xs text-slate-500 mt-3">Rhyme letters mark end-rhyme groups · meter is syllables per line</p>
                   </div>
+                )}
 
-                  <div className="bg-slate-900 rounded-2xl border border-slate-800 p-6 shadow-lg hover:border-slate-700 transition-colors md:col-span-2">
+                <div className="grid grid-cols-1 gap-6">
+                  <div className="bg-slate-900 rounded-2xl border border-slate-800 p-6 shadow-lg hover:border-slate-700 transition-colors ">
                     <div className="flex justify-between items-start mb-4">
                       <h4 className="font-medium text-indigo-400 uppercase tracking-wider text-xs flex items-center gap-2">
                         <FileText className="w-4 h-4" /> Sample Lyrics (Suno Ready)

@@ -5,11 +5,36 @@ const SUNO_SCHEMA = {
   type: 'OBJECT',
   properties: {
     genre_tags: { type: 'STRING' },
-    structure: { type: 'STRING' },
-    rhyme_scheme: { type: 'STRING' },
+    tempo_bpm: { type: 'INTEGER' },
+    key: { type: 'STRING' },
+    stems: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: { group: { type: 'STRING' }, prompt: { type: 'STRING' } },
+        required: ['group', 'prompt'],
+      },
+    },
+    sections: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: {
+          name: { type: 'STRING' },
+          bars: { type: 'INTEGER' },
+          seconds: { type: 'INTEGER' },
+          lines: { type: 'INTEGER' },
+          rhyme: { type: 'STRING' },
+          meter: { type: 'STRING' },
+          description: { type: 'STRING' },
+          suno_tags: { type: 'STRING' },
+        },
+        required: ['name', 'bars', 'seconds', 'lines', 'rhyme', 'meter', 'description', 'suno_tags'],
+      },
+    },
     sample_lyrics: { type: 'STRING' },
   },
-  required: ['genre_tags', 'structure', 'rhyme_scheme', 'sample_lyrics'],
+  required: ['genre_tags', 'tempo_bpm', 'key', 'stems', 'sections', 'sample_lyrics'],
 };
 
 export class GeminiError extends Error {
@@ -91,16 +116,45 @@ export function fitStylePrompt(text, max = STYLE_PROMPT_MAX) {
   return { text: (cut > 0 ? head.slice(0, cut) : head).trim(), trimmed: true };
 }
 
-export function buildPrompt({ artist, song, topic, reference }) {
-  return `Analyze the musical style of artist "${artist}"${song ? ` and specifically the song "${song}"` : ''}.
+export function buildPrompt({ artist, song, topic, lyrics, reference }) {
+  const subject = `the artist "${artist}"${song ? ` and specifically the song "${song}"` : ''}`;
 
-Provide the following details in plain text, with absolutely no markdown code blocks or JSON formatting inside the values:
-1. "genre_tags": A rich, descriptive Suno.ai "Style of Music" prompt. Aim for roughly 750 to 950 characters and NEVER exceed ${STYLE_PROMPT_MAX} characters. Start with one line of comma-separated core style tags: genre and subgenre, era, tempo in BPM, musical key, vocal type, and mood (e.g. "upbeat, 80s synthpop, 118 BPM, A minor, breathy female vocals, nostalgic"). Then describe the sound in complete sentences: the instruments and how each is played, the vocal delivery, the rhythm and groove, how the arrangement builds and drops across the song, and the mix and production techniques. Finish every sentence. Never include artist names, band names or song titles (Suno rejects them).
-2. "structure": A description of the song structure (e.g., Intro, Verse, Chorus...).
-3. "rhyme_scheme": A description of the rhyme scheme used, and the pattern of syllables per line (e.g., AABB with 8 syllables per line).
-4. "sample_lyrics": A complete set of original sample lyrics that matches the identified genre, structure, and rhyme scheme.${topic ? ` The lyrics MUST be specifically about this topic: "${topic}".` : ' Write the lyrics about a typical theme for this artist.'} MUST include proper Suno.ai style metatags in brackets (e.g., [Intro], [Verse 1], [Chorus], [Drop], [Guitar Solo], [Outro]). Consider this will be between a 3 and 5 minute song. Put each lyric line on its own line and leave a blank line between song sections.
+  const structureSource = lyrics
+    ? `Measure the structure from the PASTED LYRICS at the end of this message. Count the actual lines in each section and the actual syllables in each line. Never quote or reproduce any of the pasted lyrics in your answer.`
+    : song
+      ? `Describe the structure of "${song}" by ${artist} from your knowledge of the song. Only include sections that actually exist in it. If you are unsure of a value, give your best estimate.`
+      : `Describe a typical song structure for this artist's style (for example Intro, Verse, Pre-Chorus, Chorus, Bridge, Outro), using values typical of the genre.`;
 
-Focus on high-fidelity audio descriptors.${reference ? `\n\n${reference}` : ''}`;
+  return `Analyze the musical style of ${subject}.
+
+Respond in plain text inside each field, with no markdown or code blocks. Never include artist names, band names or song titles in genre_tags, stems, suno_tags or sample_lyrics (Suno rejects them).
+
+1. "genre_tags": A rich, descriptive Suno.ai "Style of Music" prompt. Aim for roughly 750 to 950 characters and NEVER exceed ${STYLE_PROMPT_MAX} characters. Start with one line of comma-separated core style tags: genre and subgenre, era, tempo in BPM, musical key, vocal type, and mood (e.g. "upbeat, 80s synthpop, 118 BPM, A minor, breathy female vocals, nostalgic"). Then describe the sound in complete sentences: the instruments and how each is played, the vocal delivery, the rhythm and groove, how the arrangement builds and drops across the song, and the mix and production techniques. Finish every sentence.
+
+2. "tempo_bpm" and "key": the tempo in BPM and the musical key (e.g. "A minor").${song ? ` Use the actual values of "${song}" if you know them, otherwise your best estimate.` : ' Infer values typical of the artist.'}
+
+3. "stems": One entry per instrument group actually present in this ${song ? 'song' : "artist's style"}, choosing only from groups that apply: Drums & Percussion, Bass, Rhythm Guitar, Lead Guitar, Piano / Keys, Synthesizers, Strings / Orchestral, Brass / Horns, Vocals, Backing Vocals / Choir, Pads & Atmosphere, FX & Transitions. For each, "group" is the group name and "prompt" is a focused Suno stem prompt describing ONLY that group in isolation, as if generating just that stem: the specific instruments, playing style, tone, role in the mix, and the tempo and key where relevant (e.g. "Isolated drum stem: tight punchy kick at 98 BPM..."). 200 to 350 characters each, complete sentences.
+
+4. "sections": The song structure, one entry per section in order. ${structureSource} For each section:
+   - "name": the section name, e.g. "Verse 1", "Chorus", "Bridge".
+   - "bars": number of bars. "seconds": its length in seconds at the song's tempo (in 4/4, seconds = bars x 4 x 60 / BPM, rounded). "lines": number of lyric lines (0 for instrumental sections).
+   - "rhyme": the end-rhyme scheme as letters, e.g. "ABAB" or "AABB" ("none" if instrumental).
+   - "meter": REQUIRED. Syllables per line as a dot-separated pattern, e.g. "8.7.8.7". If it varies, give the most common pattern. Use "-" only for instrumental sections.
+   - "description": 1 to 2 plain-English sentences on what the section does emotionally or structurally; note variations (e.g. "Chorus 2 adds a second vocal layer").
+   - "suno_tags": the Suno section header with style hints, e.g. "[Verse 1 - sparse, intimate, fingerpicked guitar]" or "[Chorus - full band, soaring vocals, anthemic]": energy, instrumentation, vocal style and mood.
+
+5. "sample_lyrics": Complete, ORIGINAL lyrics${topic ? ` about this topic: "${topic}"` : ' on a theme typical of this artist'}, written to fit the "sections" above exactly: the same sections in the same order, the same number of lines per section, the same rhyme scheme and the same syllables-per-line meter. Start each section with its "suno_tags" header on its own line, put each lyric line on its own line, and leave a blank line between sections. Instrumental sections get just their header. Do not reuse or paraphrase lines from any existing song${lyrics ? ', including the pasted lyrics' : ''}.${reference ? `\n\n${reference}` : ''}${lyrics ? `\n\nPASTED LYRICS (for structure analysis only; never reproduce them):\n<<<\n${lyrics}\n>>>` : ''}`;
+}
+
+/** The structure as plain text, for copying. */
+export function formatSections(sections = []) {
+  return sections.map((s) => [
+    `[${(s.name || '').toUpperCase()}]`,
+    s.lines > 0
+      ? `${s.bars} bars (${s.seconds} secs / ${s.lines} lines). ${s.rhyme} ${s.meter} - ${s.description}`
+      : `${s.bars} bars (${s.seconds} secs, instrumental) - ${s.description}`,
+    `Suno tags: ${s.suno_tags}`,
+  ].join('\n')).join('\n\n');
 }
 
 const delay = (ms) => new Promise((res) => setTimeout(res, ms));
