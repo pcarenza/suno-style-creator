@@ -4,7 +4,8 @@
 // Deploy:  cd mcp-proxy && npx wrangler deploy
 // Then set the app's MCP URL to:  https://<your-worker>.workers.dev/mcp
 
-const UPSTREAM = 'https://mcp.musicatlas.ai/mcp';
+// Override with the UPSTREAM variable (e.g. for local testing).
+const DEFAULT_UPSTREAM = 'https://mcp.musicatlas.ai/mcp';
 
 // Lock this down to your GitHub Pages origin (and localhost for dev).
 const ALLOWED_ORIGINS = [
@@ -26,7 +27,7 @@ function corsHeaders(origin) {
 }
 
 export default {
-  async fetch(request) {
+  async fetch(request, env = {}) {
     const origin = request.headers.get('Origin') || '';
     const url = new URL(request.url);
 
@@ -46,7 +47,7 @@ export default {
       if (v) headers.set(h, v);
     }
 
-    const upstream = await fetch(UPSTREAM, {
+    const upstream = await fetch(env.UPSTREAM || DEFAULT_UPSTREAM, {
       method: request.method,
       headers,
       body: ['GET', 'HEAD'].includes(request.method) ? undefined : request.body,
