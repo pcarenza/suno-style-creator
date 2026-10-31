@@ -1,9 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Music, Mic2, Disc, Copy, Check, Sparkles, AlertCircle, Loader2, Play, FileText, MessageSquare, Key, Plug, Radio, Users, ChevronDown } from 'lucide-react';
+import { Music, Mic2, Disc, Copy, Check, Sparkles, AlertCircle, Loader2, Play, FileText, MessageSquare, Key, Plug, Users, ChevronDown } from 'lucide-react';
 import { DEFAULT_MCP_URL } from './mcpConfig';
 
-// The MCP SDK is loaded on demand so it doesn't weigh down the first page load.
-const loadMcp = () => import('./mcp');
+// The Claude client is loaded on demand so it doesn't weigh down the first page load.
 const loadClaude = () => import('./claude');
 
 const readPref = (key, fallback) => {
@@ -16,21 +15,8 @@ const writePref = (key, value) => {
   try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* storage unavailable */ }
 };
 
-// Turn MCP tool output into a reference block for the Claude prompt.
-const buildReferenceBlock = (ctx) => {
-  if (!ctx) return '';
-  const sections = [];
-  if (ctx.trackAnalysis) sections.push(`AUDIO ANALYSIS OF THE REFERENCE TRACK:\n${ctx.trackAnalysis}`);
-  if (ctx.similarTracks) sections.push(`SONICALLY SIMILAR TRACKS:\n${ctx.similarTracks}`);
-  if (ctx.similarArtists) sections.push(`SONICALLY SIMILAR ARTISTS:\n${ctx.similarArtists}`);
-  if (!sections.length) return '';
-  return `Reference data from MusicAtlas audio analysis (via MCP). Treat it as ground truth about how the music sounds: let its instrumentation, tempo, energy, rhythm and production details drive genre_tags, and use the similar artists and tracks only as stylistic context.
-
-<reference_data>
-${sections.join('\n\n')}
-</reference_data>`;
-};
-
+const formatToolInput = (input) =>
+  Object.values(input || {}).filter((v) => typeof v === 'string').join(' – ');
 
 export default function App() {
   const [artist, setArtist] = useState('');
@@ -45,29 +31,12 @@ export default function App() {
   // MCP enrichment
   const [useMcp, setUseMcp] = useState(() => readPref('mcp.enabled', true));
   const [mcpUrl, setMcpUrl] = useState(() => readPref('mcp.url', DEFAULT_MCP_URL));
-  const [mcpStage, setMcpStage] = useState(null); // null | 'mcp' | 'llm'
-  const [mcpContext, setMcpContext] = useState(null);
-  const [mcpWarning, setMcpWarning] = useState(null);
-  const [mcpTest, setMcpTest] = useState(null); // { ok, text }
-  const [testing, setTesting] = useState(false);
+  const [progress, setProgress] = useState(null);
+  const [toolCalls, setToolCalls] = useState([]);
   const [showRaw, setShowRaw] = useState(false);
 
   useEffect(() => writePref('mcp.enabled', useMcp), [useMcp]);
   useEffect(() => writePref('mcp.url', mcpUrl), [mcpUrl]);
-
-  const testMcp = async () => {
-    setTesting(true);
-    setMcpTest(null);
-    try {
-      const { connectMcp } = await loadMcp();
-      const { client, tools } = await connectMcp(mcpUrl.trim());
-      client.close().catch(() => {});
-      setMcpTest({ ok: true, text: `Connected. ${tools.length} tools: ${tools.map(t => t.name).join(', ')}` });
-    } catch (err) {
-      setMcpTest({ ok: false, text: err.message });
-    }
-    setTesting(false);
-  };
 
   const generatePrompt = async () => {
     if (!artist.trim()) {
@@ -82,40 +51,28 @@ export default function App() {
     setLoading(true);
     setError(null);
     setResult(null);
-    setMcpContext(null);
-    setMcpWarning(null);
+    setToolCalls([]);
     setShowRaw(false);
-
-    // Step 1: ground the request in real audio data via MCP (best effort).
-    let ctx = null;
-    if (useMcp && mcpUrl.trim()) {
-      setMcpStage('mcp');
-      try {
-        const { gatherMusicContext } = await loadMcp();
-        ctx = await gatherMusicContext(mcpUrl.trim(), { artist: artist.trim(), song: song.trim() });
-        setMcpContext(ctx);
-        if (ctx.warnings.length) setMcpWarning(ctx.warnings.join(' | '));
-      } catch (err) {
-        setMcpWarning(`${err.message} Continuing without MusicAtlas data.`);
-      }
-    }
-    setMcpStage('llm');
+    setProgress(null);
 
     try {
       const { generateSunoPrompt } = await loadClaude();
-      const parsed = await generateSunoPrompt({
+      const { result: parsed, toolCalls: calls } = await generateSunoPrompt({
         apiKey: customKey.trim(),
         artist: artist.trim(),
         song: song.trim(),
         topic: topic.trim(),
-        reference: buildReferenceBlock(ctx),
+        mcpServerUrl: useMcp ? mcpUrl.trim() : '',
+        onProgress: setProgress,
       });
       setResult(parsed);
+      setToolCalls(calls);
     } catch (err) {
       console.error(err);
       setError(err.message);
     }
-    setLoading(false); setMcpStage(null);
+    setLoading(false);
+    setProgress(null);
   };
 
   const copyToClipboard = (text, section) => {
@@ -146,7 +103,7 @@ export default function App() {
             </h1>
           </div>
           <span className="text-xs font-medium px-2 py-1 rounded bg-slate-800 text-slate-400 border border-slate-700">
-            v5.0 Claude + MCP
+            v5.1 Claude + MCP
           </span>
         </div>
       </header>
@@ -223,7 +180,7 @@ export default function App() {
                 {useMcp && (
                   <>
                     <p className="text-xs text-slate-500">
-                      Calls MusicAtlas tools (describe_track, find_similar_tracks, find_similar_artists) before writing the prompt, so the tags describe how the music really sounds.
+                      Claude calls MusicAtlas itself (describe_track, find_similar_tracks, find_similar_artists) through Anthropic's MCP connector, so the tags describe how the music really sounds.
                     </p>
                     <div className="flex gap-2">
                       <input
@@ -233,22 +190,11 @@ export default function App() {
                         placeholder={DEFAULT_MCP_URL}
                         className="flex-1 min-w-0 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent font-mono"
                       />
-                      <button
-                        type="button"
-                        onClick={testMcp}
-                        disabled={testing}
-                        className="px-3 py-2 text-xs font-medium rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 flex items-center gap-1 disabled:opacity-50"
-                      >
-                        {testing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Radio className="w-3 h-3" />} Test
-                      </button>
                     </div>
                     {mcpUrl.trim() !== DEFAULT_MCP_URL && (
                       <button type="button" onClick={() => setMcpUrl(DEFAULT_MCP_URL)} className="text-xs text-slate-500 hover:text-slate-300 underline">
                         Reset to MusicAtlas default
                       </button>
-                    )}
-                    {mcpTest && (
-                      <p className={`text-xs break-words ${mcpTest.ok ? 'text-emerald-400' : 'text-amber-400'}`}>{mcpTest.text}</p>
                     )}
                   </>
                 )}
@@ -271,13 +217,6 @@ export default function App() {
                 </p>
               </div>
 
-              {mcpWarning && (
-                <div className="mb-6 p-3 bg-amber-900/20 border border-amber-800/60 rounded-lg flex items-start gap-3 text-amber-200">
-                  <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
-                  <p className="text-xs break-words">{mcpWarning}</p>
-                </div>
-              )}
-
               {error && (
                 <div className="mb-6 p-4 bg-red-900/20 border border-red-800 rounded-lg flex items-center gap-3 text-red-200">
                   <AlertCircle className="w-5 h-5 flex-shrink-0" />
@@ -296,7 +235,7 @@ export default function App() {
               >
                 {loading ? (
                   <>
-                    <Loader2 className="w-5 h-5 animate-spin" /> {mcpStage === 'mcp' ? 'Listening via MusicAtlas...' : 'Analyzing & Writing...'}
+                    <Loader2 className="w-5 h-5 animate-spin" /> {progress ? 'Claude is researching...' : 'Analyzing & Writing...'}
                   </>
                 ) : (
                   <>
@@ -384,7 +323,7 @@ export default function App() {
                   </div>
                 </div>
 
-                {mcpContext && mcpContext.toolsUsed.length > 0 && (
+                {toolCalls.length > 0 && (
                   <div className="bg-slate-900 rounded-2xl border border-emerald-500/20 p-6 shadow-lg">
                     <button
                       type="button"
@@ -392,21 +331,25 @@ export default function App() {
                       className="w-full flex justify-between items-center text-left"
                     >
                       <h4 className="font-medium text-emerald-400 uppercase tracking-wider text-xs flex items-center gap-2">
-                        <Users className="w-4 h-4" /> MusicAtlas Reference Data (via MCP)
+                        <Users className="w-4 h-4" /> MusicAtlas Data Claude Used (via MCP)
                       </h4>
                       <ChevronDown className={`w-4 h-4 text-slate-500 transition-transform ${showRaw ? 'rotate-180' : ''}`} />
                     </button>
-                    <p className="text-xs text-slate-500 mt-2">Grounded with: {mcpContext.toolsUsed.join(', ')}</p>
+                    <p className="text-xs text-slate-500 mt-2">
+                      Tool calls: {toolCalls.map((c) => c.name + (c.isError ? ' (failed)' : '')).join(', ')}
+                    </p>
                     {showRaw && (
                       <div className="mt-4 space-y-4">
-                        {[['Track analysis', mcpContext.trackAnalysis], ['Similar tracks', mcpContext.similarTracks], ['Similar artists', mcpContext.similarArtists]]
-                          .filter(([, v]) => v)
-                          .map(([label, v]) => (
-                            <div key={label}>
-                              <p className="text-xs text-slate-400 mb-1">{label}</p>
-                              <p className="text-sm text-slate-300 whitespace-pre-wrap bg-slate-950 p-4 rounded-xl border border-slate-800/50 max-h-72 overflow-auto">{v}</p>
-                            </div>
-                          ))}
+                        {toolCalls.map((c, i) => (
+                          <div key={i}>
+                            <p className="text-xs text-slate-400 mb-1">
+                              <span className="font-mono text-emerald-300">{c.name}</span> {formatToolInput(c.input)}
+                            </p>
+                            <p className={`text-sm whitespace-pre-wrap bg-slate-950 p-4 rounded-xl border border-slate-800/50 max-h-72 overflow-auto ${c.isError ? 'text-amber-300' : 'text-slate-300'}`}>
+                              {c.output || '(no output)'}
+                            </p>
+                          </div>
+                        ))}
                       </div>
                     )}
                   </div>
@@ -417,7 +360,7 @@ export default function App() {
                 {loading ? (
                   <div className="flex flex-col items-center animate-in fade-in duration-300">
                     <Loader2 className="w-12 h-12 animate-spin text-purple-500 mb-6" />
-                    <p className="text-lg text-slate-300 font-medium">{mcpStage === 'mcp' ? 'Fetching audio analysis over MCP...' : 'Analyzing Musical Style...'}</p>
+                    <p className="text-lg text-slate-300 font-medium">{progress || 'Analyzing Musical Style...'}</p>
                     <p className="text-sm mt-2 max-w-sm">Generating Suno.ai tags, song structure, and writing original lyrics.</p>
                   </div>
                 ) : (
