@@ -13,9 +13,10 @@ const SUNO_SCHEMA = {
 };
 
 export class GeminiError extends Error {
-  constructor(message, { retryable = false } = {}) {
+  constructor(message, { retryable = false, busy = false } = {}) {
     super(message);
     this.retryable = retryable;
+    this.busy = busy; // the model is overloaded or not answering: another model may work
   }
 }
 
@@ -26,7 +27,8 @@ async function readError(response) {
   if (s === 400 && /api key/i.test(msg)) return new GeminiError('Invalid Gemini API key. Check the key you pasted.');
   if (s === 401 || s === 403) return new GeminiError(`This Gemini API key isn't allowed to do that (HTTP ${s}): ${msg}`);
   if (s === 404) return new GeminiError(`Model not found (HTTP 404). Pick another model from the list. ${msg}`);
-  if (s === 429) return new GeminiError(`Gemini rate limit or quota reached (HTTP 429): ${msg}`, { retryable: true });
+  if (s === 429) return new GeminiError(`Gemini rate limit or quota reached (HTTP 429): ${msg}`, { retryable: true, busy: true });
+  if (s === 503) return new GeminiError(`Gemini is overloaded (HTTP 503): ${msg}`, { retryable: true, busy: true });
   if (s >= 500) return new GeminiError(`Gemini server error (HTTP ${s}): ${msg}`, { retryable: true });
   return new GeminiError(`Gemini API error (HTTP ${s}): ${msg}`);
 }
@@ -54,13 +56,24 @@ const SPECIALIZED = /lite|image|tts|live|audio|embedding|native|robotics|compute
 const UNSTABLE = /preview|exp|latest|\d{2}-\d{4}$/i;
 const version = (id) => parseFloat(id.match(/^gemini-(\d+(?:\.\d+)?)/)?.[1] || '0');
 
-/** Newest general-purpose Flash model, preferring stable over preview. */
-export function pickDefaultModel(ids) {
+/** General-purpose Flash models, best first: stable newest-first, then preview newest-first. */
+export function rankFlashModels(ids) {
   const flash = ids.filter((id) => /^gemini-[\d.]+-flash/.test(id) && !SPECIALIZED.test(id));
   const byNewest = (a, b) => version(b) - version(a) || a.length - b.length;
-  const stable = flash.filter((id) => !UNSTABLE.test(id)).sort(byNewest);
-  if (stable.length) return stable[0];
-  return flash.sort(byNewest)[0] || ids[0] || '';
+  return [
+    ...flash.filter((id) => !UNSTABLE.test(id)).sort(byNewest),
+    ...flash.filter((id) => UNSTABLE.test(id)).sort(byNewest),
+  ];
+}
+
+/** Newest general-purpose Flash model, preferring stable over preview. */
+export function pickDefaultModel(ids) {
+  return rankFlashModels(ids)[0] || ids[0] || '';
+}
+
+/** Models to fall back to when `model` is busy: the next best Flash models. */
+export function fallbackModels(ids, model, count = 2) {
+  return rankFlashModels(ids).filter((id) => id !== model).slice(0, count);
 }
 
 export function buildPrompt({ artist, song, topic, reference }) {
@@ -77,40 +90,83 @@ Focus on high-fidelity audio descriptors.${reference ? `\n\n${reference}` : ''}`
 
 const delay = (ms) => new Promise((res) => setTimeout(res, ms));
 
-export async function generateSunoPrompt({ apiKey, model, prompt }) {
+const REQUEST_TIMEOUT_MS = 120000;
+const BUSY_DELAYS = [2000]; // retries on the same model before moving on when it is busy
+const OTHER_DELAYS = [1000, 3000]; // retries for network errors, other 5xx, unreadable output
+
+async function requestOnce({ apiKey, model, body }) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  let data;
+  try {
+    const response = await fetch(`${API}/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+      signal: controller.signal,
+    });
+    if (!response.ok) throw await readError(response);
+    data = await response.json();
+  } catch (err) {
+    if (err instanceof GeminiError) throw err;
+    if (err?.name === 'AbortError') {
+      throw new GeminiError(`${model} did not answer within ${REQUEST_TIMEOUT_MS / 1000}s.`, { retryable: true, busy: true });
+    }
+    throw new GeminiError(`Could not reach the Gemini API: ${err.message}`, { retryable: true });
+  } finally {
+    clearTimeout(timer);
+  }
+
+  const candidate = data.candidates?.[0];
+  const text = candidate?.content?.parts?.map((p) => p.text || '').join('');
+  if (!text) {
+    const reason = data.promptFeedback?.blockReason || candidate?.finishReason || 'no content';
+    throw new GeminiError(`Gemini returned no result (${reason}). Try a different artist, song or topic.`);
+  }
+  try {
+    return JSON.parse(text.replace(/^[\s`]*(?:json)?\s*/i, '').replace(/[\s`]*$/, ''));
+  } catch {
+    throw new GeminiError('Gemini returned a response that could not be read. Please try again.', { retryable: true });
+  }
+}
+
+/**
+ * Generate with `model`; if it stays overloaded (503/429) or doesn't answer,
+ * move on to each of `fallbacks` in turn.
+ * @returns {Promise<{ result: object, modelUsed: string }>}
+ */
+export async function generateSunoPrompt({ apiKey, model, fallbacks = [], prompt, onStatus }) {
   const body = JSON.stringify({
     contents: [{ parts: [{ text: prompt }] }],
     generationConfig: { responseMimeType: 'application/json', responseSchema: SUNO_SCHEMA },
   });
-  const delays = [1000, 2000, 4000, 8000];
+  const candidates = [model, ...fallbacks.filter((m) => m && m !== model)];
+  let lastError;
 
-  for (let attempt = 0; ; attempt++) {
-    try {
-      const response = await fetch(`${API}/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body,
-      });
-      if (!response.ok) throw await readError(response);
-
-      const data = await response.json();
-      const candidate = data.candidates?.[0];
-      const text = candidate?.content?.parts?.map((p) => p.text || '').join('');
-      if (!text) {
-        const reason = data.promptFeedback?.blockReason || candidate?.finishReason || 'no content';
-        throw new GeminiError(`Gemini returned no result (${reason}). Try a different artist, song or topic.`);
-      }
+  for (let i = 0; i < candidates.length; i++) {
+    const current = candidates[i];
+    if (i > 0) onStatus?.(`${candidates[i - 1]} is busy. Trying ${current}...`);
+    let busyTries = 0;
+    let otherTries = 0;
+    for (;;) {
       try {
-        return JSON.parse(text.replace(/^[\s`]*(?:json)?\s*/i, '').replace(/[\s`]*$/, ''));
-      } catch {
-        throw new GeminiError('Gemini returned a response that could not be read. Please try again.', { retryable: true });
+        return { result: await requestOnce({ apiKey, model: current, body }), modelUsed: current };
+      } catch (err) {
+        lastError = err;
+        if (!err.retryable) throw err;
+        if (err.busy) {
+          if (busyTries >= BUSY_DELAYS.length) break; // give up on this model
+          onStatus?.(`${current} is busy. Retrying...`);
+          await delay(BUSY_DELAYS[busyTries++]);
+        } else {
+          if (otherTries >= OTHER_DELAYS.length) throw err;
+          onStatus?.('Gemini request failed. Retrying...');
+          await delay(OTHER_DELAYS[otherTries++]);
+        }
       }
-    } catch (err) {
-      const retryable = err instanceof GeminiError ? err.retryable : true; // network errors retry
-      if (!retryable || attempt >= delays.length) {
-        throw err instanceof GeminiError ? err : new GeminiError(`Could not reach the Gemini API: ${err.message}`);
-      }
-      await delay(delays[attempt]);
     }
   }
+  throw new GeminiError(
+    `${lastError.message} Tried: ${candidates.join(', ')}. Wait a few minutes or pick another model.`,
+  );
 }
