@@ -2,6 +2,12 @@
 
 Generates Suno.ai style tags, song structure, rhyme scheme and Suno-ready lyrics from an artist, an optional song, and an optional topic.
 
+## Gemini
+
+- **Your key:** paste your Gemini API key into the form. It is sent only to Google's API from your browser and never stored.
+- **Model:** after you paste the key, the app asks the Gemini API which models the key can use. It picks the newest stable general-purpose Flash model, so a retired model name (like `gemini-2.5-flash`, shut down 2026-10-16) can't break it. You can choose another model from the **Model** dropdown, and the choice is remembered.
+- **Code:** the request, prompt and JSON schema live in `src/gemini.js`.
+
 ## MCP grounding (v4)
 
 Before calling Gemini, the app can connect to a remote **MCP server** and pull real audio analysis. By default it uses [MusicAtlas](https://musicatlas.ai/connectors/), which is free and needs no account: `https://mcp.musicatlas.ai/mcp`.
