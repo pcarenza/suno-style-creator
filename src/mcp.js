@@ -49,6 +49,19 @@ export function resultToText(result) {
   return parts.join('\n\n');
 }
 
+const TRANSIENT = /\b5\d\d\b|non-JSON|timed out|rate limit|too many/i;
+
+// Retry once after a short pause when the server reports a temporary failure.
+async function callWithRetry(fn, pauseMs = 1500) {
+  try {
+    return await fn();
+  } catch (err) {
+    if (!TRANSIENT.test(err?.message || '')) throw err;
+    await new Promise((res) => setTimeout(res, pauseMs));
+    return fn();
+  }
+}
+
 export async function callTool(client, tools, name, args) {
   const tool = findTool(tools, name);
   if (!tool) return null;
@@ -75,20 +88,20 @@ export async function gatherMusicContext(url, { artist, song }) {
   }
   calls.push(['similarArtists', 'find_similar_artists', { artist }]);
 
-  const settled = await Promise.allSettled(
-    calls.map(([, tool, args]) => callTool(client, tools, tool, args)),
-  );
-
+  // One call at a time: when the calls ran in parallel, MusicAtlas answered
+  // all but the first with server errors (likely a concurrency limit).
   const context = { toolsUsed: [], warnings: [] };
-  settled.forEach((s, i) => {
-    const [key, tool] = calls[i];
-    if (s.status === 'fulfilled' && s.value) {
-      context[key] = s.value;
-      context.toolsUsed.push(tool);
-    } else if (s.status === 'rejected') {
-      context.warnings.push(`${tool}: ${s.reason?.message || s.reason}`);
+  for (const [key, tool, args] of calls) {
+    try {
+      const text = await callWithRetry(() => callTool(client, tools, tool, args));
+      if (text) {
+        context[key] = text;
+        context.toolsUsed.push(tool);
+      }
+    } catch (err) {
+      context.warnings.push(`${tool}: ${err?.message || err}`);
     }
-  });
+  }
 
   client.close().catch(() => {});
   return context;
